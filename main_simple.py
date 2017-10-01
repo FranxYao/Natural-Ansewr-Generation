@@ -8,11 +8,12 @@
 import tensorflow as tf 
 from data_utils_full import Dataset
 from model import Model
+# from model_checklist import Model
 import os
 import cPickle
 import time
 
-GPU_NUM = 0
+GPU_NUM = 1
 os.environ["CUDA_VISIBLE_DEVICES"] = str(GPU_NUM)
 flags = tf.flags
 flags.DEFINE_integer("vocab_size", 0, "")
@@ -31,6 +32,7 @@ flags.DEFINE_integer("memkey_size", 21, "")
 flags.DEFINE_integer("attn_hop_size", 2, "")
 flags.DEFINE_integer("out_mode_gate", False, "")
 flags.DEFINE_integer("gpu", GPU_NUM, "")
+flags.DEFINE_string("config_name", "mymodel_nogate", "")
 config = flags.FLAGS
 
 def main():

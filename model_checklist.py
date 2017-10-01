@@ -30,7 +30,6 @@ class Model(object):
     self.memkey_size = config.memkey_size
     self.attn_hop_size = config.attn_hop_size
     self.out_mode_gate = config.out_mode_gate
-    self.config_name = config.config_name
     self.out = []
     self.out_test = []
     return 
@@ -68,7 +67,6 @@ class Model(object):
     self.input_ac = tf.placeholder(dtype = tf.int32, shape = [batch_size], name = "input_ac")
     # movie
     self.input_movi = tf.placeholder(dtype = tf.int32, shape = [batch_size], name = "input_movie")
-    # Auxiliary
     self.dec_out_record = tf.placeholder(dtype = tf.float32, 
                                          shape = [batch_size, max_a_len, state_size], 
                                          name = "dec_out_record")
@@ -163,16 +161,18 @@ class Model(object):
     def attention(query, memory_keys, memory_vals, mlen, max_mlen, reuse, attn_name):
       with tf.variable_scope(attn_name) as attn_scope:
         if(reuse): attn_scope.reuse_variables()
+        q_size = int(query.shape[-1])
         attn_key_W_q = tf.get_variable(name = "attn_key_W_q",
-                                       shape = [state_size, state_size],
+                                       shape = [q_size, state_size],
                                        dtype = tf.float32,
                                        initializer = tf.random_normal_initializer())
         qr = tf.matmul(query, attn_key_W_q)
+        m_size = int(memory_keys.shape[-1])
         attn_key_W_m = tf.get_variable(name = "attn_key_W_m",
-                                       shape = [state_size, state_size],
+                                       shape = [m_size, state_size],
                                        dtype = tf.float32,
                                        initializer = tf.random_normal_initializer())
-        attn_key_W_m = tf.reshape(tf.tile(attn_key_W_m, [batch_size, 1]), [batch_size, state_size, state_size])
+        attn_key_W_m = tf.reshape(tf.tile(attn_key_W_m, [batch_size, 1]), [batch_size, m_size, state_size])
         mk = tf.matmul(memory_keys, attn_key_W_m)
         attn_v = tf.get_variable(name = "attn_v", dtype = tf.float32,
           initializer = np.array([1.0] * state_size).astype(np.float32))
@@ -184,84 +184,6 @@ class Model(object):
         attn_e = tf.nn.softmax(attn_e_masked)
         attn_o = tf.reduce_sum(tf.expand_dims(attn_e, 2) * memory_vals, 1)
       return attn_o, attn_e, attn_e_nomask
-
-    """
-    # Attention to key
-    # Justification: since the key is basically the class of the value, 
-    #                it is more related to type of answer words
-    #                i.e: question asking for "director" will more relatd to key "director"
-    def attention_key(query, reuse):
-      mlen = self.input_mlen
-      with tf.variable_scope("attention_key") as attn_scope:
-        if(reuse): attn_scope.reuse_variables()
-        attn_key_W = tf.get_variable(name = "attn_key_W", 
-                                     shape = [state_size, state_size],
-                                     dtype = tf.float32,
-                                     initializer = tf.random_normal_initializer())
-        query = tf.matmul(query, attn_key_W)
-        attn_e_nomask = tf.reduce_sum(tf.expand_dims(query, 1) * embed_mk, 2)  # Note: energy based on k
-        # attn_e_nomask = tf.nn.sigmoid(attn_e_nomask)
-        # assert(attn_e.shape == (batch_size, max_m_len))
-        if(reuse != True): print("attn_e shape: ", attn_e_nomask.shape)
-        attn_e = tf.nn.softmax(attn_e_nomask * tf.sequence_mask(mlen, max_m_len, dtype = tf.float32))
-        attn_o = tf.reduce_sum(tf.expand_dims(attn_e, 2) * embed_mv, 1) # Note: output based on v
-        # assert(attn_o.shape == (batch_size, state_size))
-        if(reuse != True): print("attn_o shape: ", attn_o.shape)
-      return attn_o, attn_e, attn_e_nomask
-    """
-
-    """
-    # Attention to value
-    # Justification: the key is more relatied to the movie, as well as the type of answer sentences
-    #                i.e: wiki sentences may attend to more words
-    def attention_val(query, reuse):
-      mlen = self.input_mlen
-      with tf.variable_scope("attention_val") as attn_scope:
-        if(reuse): attn_scope.reuse_variables()
-        attn_val_W = tf.get_variable(name = "attn_val_W", 
-                                     shape = [state_size, state_size],
-                                     dtype = tf.float32,
-                                     initializer = tf.random_normal_initializer())
-        query = tf.matmul(query, attn_val_W)
-        attn_e_nomask = tf.reduce_sum(tf.expand_dims(query, 1) * embed_mv, 2)  # Note: energy and output all based on v
-        # attn_e_nomask = tf.nn.sigmoid(attn_e_nomask)
-        # assert(attn_e.shape == (batch_size, max_m_len))
-        if(reuse != True): print("attn_e shape: ", attn_e_nomask.shape)
-        attn_e = tf.nn.softmax(attn_e_nomask * tf.sequence_mask(mlen, max_m_len, dtype = tf.float32))
-        attn_o = tf.reduce_sum(tf.expand_dims(attn_e, 2) * embed_mv, 1)
-        # assert(attn_o.shape == (batch_size, state_size))
-        if(reuse != True): print("attn_o shape: ", attn_o.shape)
-      return attn_o, attn_e, attn_e_nomask
-    """
-
-    """
-    # Attention to previous output
-    self.dec_out_record = tf.placeholder(dtype = tf.float32, 
-                                         shape = [batch_size, max_a_len, state_size], 
-                                         name = "dec_out_record")
-    dec_out_record = self.dec_out_record
-    def attention_out(query, stepi, reuse):
-      alen = stepi * tf.ones([batch_size], tf.float32)
-      with tf.variable_scope("attention_out") as attn_scope:
-        if(reuse): attn_scope.reuse_variables()
-        attn_out_W = tf.get_variable(name = "attn_out_W", 
-                                     shape = [state_size, state_size],
-                                     dtype = tf.float32,
-                                     initializer = tf.random_normal_initializer())
-        query = tf.matmul(query, attn_out_W)
-        attn_e_nomask = tf.reduce_sum(tf.expand_dims(query, 1) * dec_out_record, 2)
-        # attn_e_nomask = tf.nn.sigmoid(attn_e_nomask)
-        if(reuse != True): 
-          print("query shape: ", query.shape)
-          print("dec_out_record shape: ", dec_out_record.shape)
-        # assert(attn_e.shape == (batch_size, max_m_len))
-        if(reuse != True): print("attn_e shape: ", attn_e_nomask.shape)
-        attn_e = tf.nn.softmax(attn_e_nomask * tf.sequence_mask(alen, max_a_len, dtype = tf.float32))
-        attn_o = tf.reduce_sum(tf.expand_dims(attn_e, 2) * dec_out_record, 1)
-        # assert(attn_o.shape == (batch_size, state_size))
-        if(reuse != True): print("attn_o shape: ", attn_o.shape)
-      return attn_o, attn_e, attn_o, attn_e_nomask
-   """
 
     # -- 7 Decoder
     decoder_cell = tf.contrib.rnn.LSTMCell(num_units = state_size)
@@ -276,21 +198,15 @@ class Model(object):
     out_idx = []
     all_logits = []
     dec_out_record = self.dec_out_record
+    mem_all = tf.concat((embed_mk, embed_mv), 2)
+    attn_hist = tf.get_variable(name = "attn_hist", dtype = tf.float32, 
+      initializer = np.zeros([batch_size, max_m_len]).astype(np.float32))
     # debug
-    dbg_dec_o = []
-    dbg_attn_mk_o = []
-    dbg_attn_mk_e = []
-    dbg_attn_mk_e_nomask = []
-    dbg_attn_mv_o = []
-    dbg_attn_mv_e = []
-    dbg_attn_mv_e_nomask = []
-    dbg_attn_out_o = []
-    dbg_attn_out_e = []
-    dbg_attn_out_e_nomask = []
-    # dbg_attn_out_mo = []
-    dbg_dec_out_record = []
-    dbg_attn_o_norm_e = []
-    dbg_attn_o_spec_e = []
+    dbg_attn_hist = []
+    dbg_mem_use = []
+    dbg_mem_new = []
+    dbg_attn_use_e = []
+    dbg_attn_new_e = []
     # Decoding
     print("\nStart decoding ... ")
     with tf.variable_scope("decoder") as decoder_scope:
@@ -308,48 +224,30 @@ class Model(object):
         # attention query
         query = prev_h.h
 
-        # output attention to key
-        attn_mk_o, attn_mk_e, attn_mk_e_nomask = attention(query, embed_mk, embed_mv, 
-          self.input_mlen, max_m_len, attn_reuse, "attention_mkey")
-        # for ai in range(self.attn_hop_size - 1):
-        #   attn_mk_o, attn_mk_e, attn_mk_e_nomask = attention_key(attn_mk_o, embed_qc, encoded_q, True)
-        dbg_attn_mk_o.append(attn_mk_o)
-        dbg_attn_mk_e.append(attn_mk_e)
-        dbg_attn_mk_e_nomask.append(attn_mk_e_nomask)
+        mem_use = mem_all * tf.expand_dims(attn_hist, 2)
+        mem_new = mem_all * tf.expand_dims((1 - attn_hist), 2)
+        dbg_mem_use.append(mem_use)
+        dbg_mem_new.append(mem_new)
 
-        # attention to value 
-        attn_mv_o, attn_mv_e, attn_mv_e_nomask = attention(query, embed_mv, embed_mv, 
-          self.input_mlen, max_m_len, attn_reuse, "attention_mval")
-        # attn_mv_o, attn_mv_e, attn_mv_e_nomask = attention_val(query, attn_reuse)
-        # for ai in range(self.attn_hop_size - 1):
-        #   attn_mv_o, attn_mv_e, attn_mv_e_nomask = attention_val(attn_mv_o, embed_movi, embed_ac, encoded_q, True)
-        dbg_attn_mv_o.append(attn_mv_o)
-        dbg_attn_mv_e.append(attn_mv_e)
-        dbg_attn_mv_e_nomask.append(attn_mv_e_nomask)
-        
-        # attention to output record
-        out_len = i * tf.ones([batch_size], tf.float32)
-        attn_out_o, attn_out_e, attn_out_e_nomask = attention(query, dec_out_record, dec_out_record, 
-          out_len, max_a_len, attn_reuse, "attention_out")
-        # attn_out_o, attn_out_e, attn_out_mo, attn_out_e_nomask = attention_out(query, i, attn_reuse)
-        # for ai in range(self.attn_hop_size - 1):
-        #   attn_out_o, attn_out_e, attn_out_mo, attn_out_e_nomask = attention_out(attn_out_o, True, i)
-        dbg_attn_out_o.append(attn_out_o)
-        dbg_attn_out_e.append(attn_out_e)
-        # dbg_attn_out_mo.append(attn_out_mo)
-        dbg_attn_out_e_nomask.append(attn_out_e_nomask)
+        # output attention to used memory
+        attn_use_o, attn_use_e, attn_use_e_nomask = attention(query, mem_use, mem_use, 
+          self.input_mlen, max_m_len, attn_reuse, "attention_use")
+        dbg_attn_use_e.append(attn_use_e)
+
+        # output attention to memory not use
+        attn_new_o, attn_new_e, attn_new_e_nomask = attention(query, mem_new, mem_new, 
+          self.input_mlen, max_m_len, attn_reuse, "attention_new")
+        dbg_attn_new_e.append(attn_new_e)
 
         # call lstm cell
-        current_o, current_h = decoder_cell(tf.concat([current_i, attn_mk_o, attn_mv_o, attn_out_o], 1) , prev_h) 
+        current_o, current_h = decoder_cell(tf.concat([current_i, attn_use_o, attn_new_o], 1) , prev_h) 
         prev_h = current_h
-        dbg_dec_o.append(current_o)
 
         # add to record
         dec_out_new  = tf.expand_dims(tf.one_hot([i], max_a_len), 2) * tf.expand_dims(current_o, 1)
         # assert(dec_out_new.shape == (batch_size, max_a_len, state_size))
         if(i == 0): print("dec_out_new shape:", dec_out_new.shape)
         dec_out_record = dec_out_record + dec_out_new
-        dbg_dec_out_record.append(dec_out_record)
 
         # output projection to normal word
         out_norm_W = tf.get_variable(name = "out_norm_W", 
@@ -361,7 +259,6 @@ class Model(object):
                                      dtype = tf.float32,
                                      initializer = tf.zeros_initializer())
         attn_o_norm_e = tf.matmul(current_o, out_norm_W) + out_norm_b
-        dbg_attn_o_norm_e.append(attn_o_norm_e)
 
         # output projection to memory
         # Note: may alternate this with direct projection
@@ -373,9 +270,8 @@ class Model(object):
         spec_mem = tf.concat([embed_mk, embed_mv], 2)
         attn_o_spec_e = tf.reduce_sum(tf.expand_dims(attn_o_spec, 1) * spec_mem, 2)
         attn_o_spec_e = tf.sequence_mask(self.input_mlen, max_m_len, dtype = tf.float32) * attn_o_spec_e
-        dbg_attn_o_spec_e.append(attn_o_spec_e)
 
-        # Optional: output mode choose gate
+        # Output mode choose gate
         if(self.out_mode_gate):
           out_mode_W = tf.get_variable(name = "out_mode_W", shape = [state_size, 1], 
             dtype = tf.float32, initializer = tf.random_normal_initializer())
@@ -386,11 +282,9 @@ class Model(object):
           attn_o_spec_e = attn_o_spec_e * (1 - out_mode) # [batch_size, norm_size] [batch_size, 1]
 
         # softmax and logits
-        # softmax_b = tf.get_variable(name = "softmax_b", 
-        #                             shape = [norm_size + max_m_len], # [norm_size + 1] + [movie] + ans
-        #                             dtype = tf.float32,
-        #                             initializer = tf.zeros_initializer())
         logits = tf.concat([attn_o_norm_e, attn_o_spec_e], 1) # size: [batch_size, pred_size]
+        attn_hist += tf.slice(tf.nn.softmax(logits), [0, norm_size], [batch_size, max_m_len])
+        dbg_attn_hist.append(attn_hist)
         # logits = logits + softmax_b
         if(self.is_train):
           loss_step = tf.nn.softmax_cross_entropy_with_logits(labels = label_steps[i], logits = logits)
@@ -409,20 +303,11 @@ class Model(object):
 
     # -- 8 Output, loss and optimizer
     # debug:
-    dbg_dec_o = tf.stack(dbg_dec_o)
-    dbg_attn_mk_o = tf.stack(dbg_attn_mk_o)
-    dbg_attn_mk_e = tf.stack(dbg_attn_mk_e)
-    dbg_attn_mk_e_nomask = tf.stack(dbg_attn_mk_e_nomask)
-    dbg_attn_mv_o = tf.stack(dbg_attn_mv_o)
-    dbg_attn_mv_e = tf.stack(dbg_attn_mv_e)
-    dbg_attn_mv_e_nomask = tf.stack(dbg_attn_mv_e_nomask)
-    dbg_attn_out_o = tf.stack(dbg_attn_out_o)
-    dbg_attn_out_e = tf.stack(dbg_attn_out_e)
-    # dbg_attn_out_mo = tf.stack(dbg_attn_out_mo)
-    dbg_attn_out_e_nomask = tf.stack(dbg_attn_out_e_nomask)
-    dbg_dec_out_record = tf.stack(dbg_dec_out_record)
-    dbg_attn_o_norm_e = tf.stack(dbg_attn_o_norm_e)
-    dbg_attn_o_spec_e = tf.stack(dbg_attn_o_spec_e)
+    dbg_attn_hist = tf.stack(dbg_attn_hist)
+    dbg_mem_use = tf.stack(dbg_mem_use)
+    dbg_mem_new = tf.stack(dbg_mem_use)
+    dbg_attn_use_e = tf.stack(dbg_attn_use_e)
+    dbg_attn_new_e = tf.stack(dbg_attn_new_e)
     print("\nCalculate loss ...")
     out_idx = tf.transpose(tf.stack(out_idx)) # size = [batch_size, max_a_len]
     all_logits = tf.transpose(tf.stack(all_logits), [1, 0, 2]) # size = [batch_size, max_a_len, norm_size + max_m_len]
@@ -439,20 +324,7 @@ class Model(object):
     train_op = optimizer.minimize(loss)
     self.out_train = [loss ,train_op, out_idx]
     self.out = [loss ,train_op, out_idx, all_logits]
-    self.out.append(dbg_dec_o)
-    self.out.append(dbg_attn_mk_o)
-    self.out.append(dbg_attn_mk_e)
-    self.out.append(dbg_attn_mk_e_nomask)
-    self.out.append(dbg_attn_mv_o)
-    self.out.append(dbg_attn_mv_e)
-    self.out.append(dbg_attn_mv_e_nomask)
-    self.out.append(dbg_attn_out_o)
-    self.out.append(dbg_attn_out_e)
-    # self.out.append(dbg_attn_out_mo)
-    self.out.append(dbg_attn_out_e_nomask)
-    self.out.append(dbg_dec_out_record)
-    self.out.append(dbg_attn_o_norm_e)
-    self.out.append(dbg_attn_o_spec_e)
+    self.out.extend([dbg_attn_hist, dbg_mem_use, dbg_mem_new, dbg_attn_use_e, dbg_attn_new_e])
     print("finished")
     return
 
@@ -525,7 +397,7 @@ class Model(object):
     total_coverage = 0
     total_coverage_large = 0
     total_coverage_perfect = 0
-    total_repeat_cnt = 0
+    total_repeat = 0
     fd = open("%s_%s_epoch%d_gpu%d.txt" % (self.config_name, self.name, ei, self.gpu), "w")
     for bi in range(total_test_batch):
       qb, qlenb, qcb, ainb, aoub, alenb, acb, mb, mkb, mvb, mlenb = dset.get_next_batch(self.name, self.batch_size)
@@ -549,18 +421,20 @@ class Model(object):
       # dropout
       feed_dict[self.keep_prob] = 1.0
       out_idx = sess.run(self.out, feed_dict)[0]
-      coverage, coverage_large, coverage_perfect, cover_targets, covered = metrics(aoub, out_idx, mkb, mvb, dset, bi)
+      coverage, coverage_large, coverage_perfect, cover_targets, covered, repeat_cnt = metrics(aoub, 
+        out_idx, mkb, mvb, dset, bi)
       total_coverage += coverage
       total_coverage_large += coverage_large
       total_coverage_perfect += coverage_perfect
+      total_repeat += repeat_cnt
       write_test_batch(qb, qlenb, aoub, alenb, mb, mkb, mvb, mlenb, out_idx, cover_targets, covered, dset, fd)
     total_coverage /= total_test_batch
     total_coverage_large /= total_test_batch
     total_coverage_perfect /= total_test_batch
-    print("total_coverage = %.2f, large: %.2f, perfect: %.2f" % 
-      (total_coverage, total_coverage_large, total_coverage_perfect))
+    print("total_coverage = %.2f, large: %.2f, perfect: %.2f, repeat: %d" % 
+      (total_coverage, total_coverage_large, total_coverage_perfect, total_repeat))
     return 
-  
+    
 def write_test_batch(qb, qlenb, aoub, alenb, mb, mkb, mvb, mlenb, out_idx, cover_targets, covered, dset, fd):
   aoub = aoub.T
   ct_cnt = 0
@@ -588,6 +462,20 @@ def write_test_batch(qb, qlenb, aoub, alenb, mb, mkb, mvb, mlenb, out_idx, cover
     fd.write("%s\n%s\n%s\n%s\n%s\n%s\n--------\n\n" % (qw, aouw, outw, mw, ct, cv))
   fd.write("\n\ncover targets: %d, covered: %d\n\n\n" % (ct_cnt, cv_cnt))
   return 
+
+
+def print_batch(dset, qb, qlenb, qcb, ainb, aoub, alenb, acb, mb, mkb, mvb, mlenb, out_idx):
+  ainb = ainb.T
+  aoub = aoub.T
+  for i in range(3):
+    print("\ncase %d:" % i)
+    case = {"q": qb[i], "qlen": qlenb[i], "c": qcb[i], 
+            "ain": ainb[i], "aou": aoub[i], "alen": alenb[i], "ac": acb[i],
+            "out_idx": out_idx[i],
+            "m": mb[i],
+            "mk": mkb[i], "mv": mvb[i], "mlen": mlenb[i]}
+    show_case(dset, case)
+  return
 
 def metrics(aoub, out_idx, mkb, mvb, dset, bi):
   aoub = aoub.T
@@ -628,20 +516,6 @@ def metrics(aoub, out_idx, mkb, mvb, dset, bi):
   coverage_perfect = float(perfect_cover_cnt) / len(aoub)
   # print("batch %d, coverage: %.2f, coverage for large set: %.2f" % (bi, coverage, coverage_large))
   return coverage, coverage_large, coverage_perfect, cover_targets, covered, repeat_cnt
-
-def print_batch(dset, qb, qlenb, qcb, ainb, aoub, alenb, acb, mb, mkb, mvb, mlenb, out_idx):
-  ainb = ainb.T
-  aoub = aoub.T
-  for i in range(3):
-    print("\ncase %d:" % i)
-    case = {"q": qb[i], "qlen": qlenb[i], "c": qcb[i], 
-            "ain": ainb[i], "aou": aoub[i], "alen": alenb[i], "ac": acb[i],
-            "out_idx": out_idx[i],
-            "m": mb[i],
-            "mk": mkb[i], "mv": mvb[i], "mlen": mlenb[i]}
-    show_case(dset, case)
-  return
-
 
 def show_case(dset, case):
   word2id = dset.word2id

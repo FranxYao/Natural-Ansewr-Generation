@@ -37,49 +37,15 @@ sess.run(tf.global_variables_initializer())
 total_batches = dset.total_cases_train
 print("%d batches in total" % total_batches)
 
-
-qb, qlenb, qcb, ainb, aoub, alenb, acb, mb, mkb, mvb, mlenb = dset.get_next_batch("train", m.batch_size)
-dec_init_record = np.zeros([m.batch_size, m.max_a_len, m.state_size])
-# print("dec_init_record shape:", dec_init_record.shape)
-feed_dict = dict()
-# question
-feed_dict[m.input_q] = qb
-feed_dict[m.input_qlen] = qlenb
-feed_dict[m.input_qc] = qcb
-# answer
-feed_dict[m.input_ain] = ainb
-feed_dict[m.input_aou] = aoub
-feed_dict[m.input_alen] = alenb
-feed_dict[m.input_ac] = acb
-# memory
-feed_dict[m.input_mk] = mkb
-feed_dict[m.input_mv] = mvb
-feed_dict[m.input_mlen] = mlenb
-# movie
-feed_dict[m.input_movi] = mb
-# initial mder record
-feed_dict[m.dec_out_record] = dec_init_record
-# dropout
-feed_dict[m.keep_prob] = 0.8
-all_out = sess.run(m.out, feed_dict)
-
 loss = all_out[0]
 train_op = all_out[1]
 out_idx = all_out[2]
 all_logits = all_out[3]
-dbg_dec_o = all_out[4]
-dbg_attn_mk_o = all_out[5]
-dbg_attn_mk_e = all_out[6]
-dbg_attn_mk_e_nomask = all_out[7]
-dbg_attn_mv_o = all_out[8]
-dbg_attn_mv_e = all_out[9]
-dbg_attn_mv_e_nomask = all_out[10]
-dbg_attn_out_o = all_out[11]
-dbg_attn_out_e = all_out[12]
-dbg_attn_out_e_nomask = all_out[13]
-dbg_dec_out_record = all_out[14]
-dbg_attn_o_norm_e = all_out[15]
-dbg_attn_o_spec_e = all_out[16]
+dbg_attn_hist = all_out[4]
+dbg_mem_use = all_out[5] 
+dbg_mem_new = all_out[6] 
+dbg_attn_use_e = all_out[7] 
+dbg_attn_new_e = all_out[8] 
 
 # Supervised training
 batch_num = 1000
