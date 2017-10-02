@@ -9,12 +9,14 @@ import tensorflow as tf
 import numpy as np
 import time
 from sets import Set
+from model import metrics, write_test_batch
 
 class Model(object):
   def __init__(self, config, name):
     self.gpu = config.gpu
     self.config_name = config.config_name
     self.name = name
+    self.out_dir = config.out_dir
     self.vocab_size = config.vocab_size
     self.vocab_norm_size = config.vocab_norm_size
     self.vocab_spec_size = config.vocab_spec_size
@@ -388,17 +390,15 @@ class Model(object):
 
   def test(self, dset, ei, sess):
     print("testing %s set" % self.name)
-    print("batch_size = %d" % self.batch_size)
     if(self.name == "valid"):
       total_test_batch = dset.total_cases_valid / self.batch_size + 1
     else:
       total_test_batch = dset.total_cases_test / self.batch_size + 1
-    print("%d test batches in total" % total_test_batch)
     total_coverage = 0
     total_coverage_large = 0
     total_coverage_perfect = 0
     total_repeat = 0
-    fd = open("%s_%s_epoch%d_gpu%d.txt" % (self.config_name, self.name, ei, self.gpu), "w")
+    fd = open("%s/%s_%s_epoch%d_gpu%d.txt" % (self.out_dir, self.config_name, self.name, ei, self.gpu), "w")
     for bi in range(total_test_batch):
       qb, qlenb, qcb, ainb, aoub, alenb, acb, mb, mkb, mvb, mlenb = dset.get_next_batch(self.name, self.batch_size)
       dec_init_record = np.zeros([self.batch_size, self.max_a_len, self.state_size])
@@ -421,48 +421,21 @@ class Model(object):
       # dropout
       feed_dict[self.keep_prob] = 1.0
       out_idx = sess.run(self.out, feed_dict)[0]
-      coverage, coverage_large, coverage_perfect, cover_targets, covered, repeat_cnt = metrics(aoub, 
+      coverage, coverage_large, coverage_perfect, cover_targets, covered, repeat_cnt, large_set_tags = metrics(aoub, 
         out_idx, mkb, mvb, dset, bi)
       total_coverage += coverage
       total_coverage_large += coverage_large
       total_coverage_perfect += coverage_perfect
       total_repeat += repeat_cnt
-      write_test_batch(qb, qlenb, aoub, alenb, mb, mkb, mvb, mlenb, out_idx, cover_targets, covered, dset, fd)
+      write_test_batch(qb, qlenb, aoub, alenb, mb, mkb, mvb, mlenb, out_idx, 
+        cover_targets, covered, dset, fd, large_set_tags)
     total_coverage /= total_test_batch
     total_coverage_large /= total_test_batch
     total_coverage_perfect /= total_test_batch
-    print("total_coverage = %.2f, large: %.2f, perfect: %.2f, repeat: %d" % 
-      (total_coverage, total_coverage_large, total_coverage_perfect, total_repeat))
+    redundancy = total_repeat / (total_coverage_large * 100)
+    print("total_coverage = %.2f, large: %.2f, perfect: %.2f, repeat: %d, redundancy: %.2f" % 
+      (total_coverage, total_coverage_large, total_coverage_perfect, total_repeat, redundancy))
     return 
-    
-def write_test_batch(qb, qlenb, aoub, alenb, mb, mkb, mvb, mlenb, out_idx, cover_targets, covered, dset, fd):
-  aoub = aoub.T
-  ct_cnt = 0
-  cv_cnt = 0
-  for i in range(len(qb)):
-    qw = "   ".join(dset.id2word[idx] for idx in qb[i][: qlenb[i]])
-    qw = "q:   "  + qw
-    aouw = "   ".join(dset.id2word[idx] if idx < dset.norm_word_cnt else
-      ("(loc %d -> " % (idx - dset.norm_word_cnt) + dset.id2word[mvb[i][idx - dset.norm_word_cnt]] + ")")
-      for idx in aoub[i][: alenb[i]])
-    aouw = "aou: " + aouw
-    outw = "   ".join(dset.id2word[idx] if idx < dset.norm_word_cnt else
-      ("(loc %d -> " % (idx - dset.norm_word_cnt) + dset.id2word[mvb[i][idx - dset.norm_word_cnt]] + ")")
-      for idx in out_idx[i])
-    outw = "out: " + outw
-    mw = " | ".join("%d, %s, %s" % (ii, dset.mem_id2labels[idx[0]], dset.id2word[idx[1]])
-        for ii, idx in enumerate(zip(mkb[i][: mlenb[i]], mvb[i][: mlenb[i]])) )
-    mw = "mm:  (" + mw + ")"
-    ct = " , ".join(idx for idx in cover_targets[i])
-    ct = "ct:   " + ct
-    cv = " , ".join(idx for idx in covered[i])
-    cv = "cv:   " + cv
-    ct_cnt += len(cover_targets[i])
-    cv_cnt += len(covered[i] & cover_targets[i])
-    fd.write("%s\n%s\n%s\n%s\n%s\n%s\n--------\n\n" % (qw, aouw, outw, mw, ct, cv))
-  fd.write("\n\ncover targets: %d, covered: %d\n\n\n" % (ct_cnt, cv_cnt))
-  return 
-
 
 def print_batch(dset, qb, qlenb, qcb, ainb, aoub, alenb, acb, mb, mkb, mvb, mlenb, out_idx):
   ainb = ainb.T
@@ -476,46 +449,6 @@ def print_batch(dset, qb, qlenb, qcb, ainb, aoub, alenb, acb, mb, mkb, mvb, mlen
             "mk": mkb[i], "mv": mvb[i], "mlen": mlenb[i]}
     show_case(dset, case)
   return
-
-def metrics(aoub, out_idx, mkb, mvb, dset, bi):
-  aoub = aoub.T
-  target_cnt = 0
-  cover_cnt = 0
-  target_cnt_large = 0
-  cover_cnt_large = 0
-  perfect_cover_cnt = 0
-  cover_targets = []
-  covered = []
-  repeat_cnt = 0
-  for i in range(len(aoub)):
-    target_set = Set()
-    predict_set = []
-    for j in aoub[i]:
-      if(j >= dset.norm_word_cnt and dset.mem_id2labels[mkb[i][j - dset.norm_word_cnt]] !="movie"):
-        target_set.add(dset.id2word[mvb[i][j - dset.norm_word_cnt]])
-    for j in out_idx[i]:
-      if(j >= dset.norm_word_cnt and dset.mem_id2labels[mkb[i][j - dset.norm_word_cnt]] !="movie"):
-        predict_set.append(dset.id2word[mvb[i][j - dset.norm_word_cnt]])
-    predict_len = len(predict_set)
-    predict_set = Set(predict_set)
-    repeat_cnt += len(predict_set) - predict_len
-    # print("%d words in target set" % len(target_set))
-    # print(target_set)
-    # print("%d words in predict set" % len(predict_set))
-    # print(predict_set)
-    target_cnt += len(target_set)
-    cover_cnt += len(target_set & predict_set)
-    if(len(target_set) == len(predict_set)): perfect_cover_cnt += 1
-    if(len(target_set) >= 2):
-      target_cnt_large += len(target_set)
-      cover_cnt_large += len(target_set & predict_set)
-    cover_targets.append(target_set)
-    covered.append(predict_set)
-  coverage = float(cover_cnt) / target_cnt
-  coverage_large = float(cover_cnt_large) / target_cnt_large if target_cnt_large != 0 else 0
-  coverage_perfect = float(perfect_cover_cnt) / len(aoub)
-  # print("batch %d, coverage: %.2f, coverage for large set: %.2f" % (bi, coverage, coverage_large))
-  return coverage, coverage_large, coverage_perfect, cover_targets, covered, repeat_cnt
 
 def show_case(dset, case):
   word2id = dset.word2id

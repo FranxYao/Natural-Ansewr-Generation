@@ -15,6 +15,7 @@ class Model(object):
     self.gpu = config.gpu
     self.config_name = config.config_name
     self.name = name
+    self.out_dir = config.out_dir
     self.vocab_size = config.vocab_size
     self.vocab_norm_size = config.vocab_norm_size
     self.vocab_spec_size = config.vocab_spec_size
@@ -121,7 +122,8 @@ class Model(object):
                                                sequence_length = self.input_qlen, 
                                                initial_state = enc_init_state)
     # use the last hidden state as the question encoding
-    encoded_q = q_rnn_stt.c + q_rnn_stt.h
+    # encoded_q = q_rnn_stt.c + q_rnn_stt.h
+    encoded_q = q_rnn_stt.h
     print("encoded_q size: ", encoded_q.shape)
     # assert(encoded_q.shape == [batch_size, state_size])
 
@@ -185,7 +187,6 @@ class Model(object):
         attn_o = tf.reduce_sum(tf.expand_dims(attn_e, 2) * memory_vals, 1)
       return attn_o, attn_e, attn_e_nomask
 
-    """
     # Attention to key
     # Justification: since the key is basically the class of the value, 
     #                it is more related to type of answer words
@@ -203,14 +204,13 @@ class Model(object):
         # attn_e_nomask = tf.nn.sigmoid(attn_e_nomask)
         # assert(attn_e.shape == (batch_size, max_m_len))
         if(reuse != True): print("attn_e shape: ", attn_e_nomask.shape)
-        attn_e = tf.nn.softmax(attn_e_nomask * tf.sequence_mask(mlen, max_m_len, dtype = tf.float32))
+        attn_e = tf.nn.softmax(attn_e_nomask)
+        # attn_e = tf.nn.softmax(attn_e_nomask * tf.sequence_mask(mlen, max_m_len, dtype = tf.float32))
         attn_o = tf.reduce_sum(tf.expand_dims(attn_e, 2) * embed_mv, 1) # Note: output based on v
         # assert(attn_o.shape == (batch_size, state_size))
         if(reuse != True): print("attn_o shape: ", attn_o.shape)
       return attn_o, attn_e, attn_e_nomask
-    """
 
-    """
     # Attention to value
     # Justification: the key is more relatied to the movie, as well as the type of answer sentences
     #                i.e: wiki sentences may attend to more words
@@ -227,18 +227,17 @@ class Model(object):
         # attn_e_nomask = tf.nn.sigmoid(attn_e_nomask)
         # assert(attn_e.shape == (batch_size, max_m_len))
         if(reuse != True): print("attn_e shape: ", attn_e_nomask.shape)
-        attn_e = tf.nn.softmax(attn_e_nomask * tf.sequence_mask(mlen, max_m_len, dtype = tf.float32))
+        attn_e = tf.nn.softmax(attn_e_nomask)
+        # attn_e = tf.nn.softmax(attn_e_nomask * tf.sequence_mask(mlen, max_m_len, dtype = tf.float32))
         attn_o = tf.reduce_sum(tf.expand_dims(attn_e, 2) * embed_mv, 1)
         # assert(attn_o.shape == (batch_size, state_size))
         if(reuse != True): print("attn_o shape: ", attn_o.shape)
       return attn_o, attn_e, attn_e_nomask
-    """
 
-    """
     # Attention to previous output
-    self.dec_out_record = tf.placeholder(dtype = tf.float32, 
-                                         shape = [batch_size, max_a_len, state_size], 
-                                         name = "dec_out_record")
+    # self.dec_out_record = tf.placeholder(dtype = tf.float32, 
+    #                                      shape = [batch_size, max_a_len, state_size], 
+    #                                      name = "dec_out_record")
     dec_out_record = self.dec_out_record
     def attention_out(query, stepi, reuse):
       alen = stepi * tf.ones([batch_size], tf.float32)
@@ -256,12 +255,12 @@ class Model(object):
           print("dec_out_record shape: ", dec_out_record.shape)
         # assert(attn_e.shape == (batch_size, max_m_len))
         if(reuse != True): print("attn_e shape: ", attn_e_nomask.shape)
-        attn_e = tf.nn.softmax(attn_e_nomask * tf.sequence_mask(alen, max_a_len, dtype = tf.float32))
+        attn_e = tf.nn.softmax(attn_e_nomask)
+        # attn_e = tf.nn.softmax(attn_e_nomask * tf.sequence_mask(alen, max_a_len, dtype = tf.float32))
         attn_o = tf.reduce_sum(tf.expand_dims(attn_e, 2) * dec_out_record, 1)
         # assert(attn_o.shape == (batch_size, state_size))
         if(reuse != True): print("attn_o shape: ", attn_o.shape)
-      return attn_o, attn_e, attn_o, attn_e_nomask
-   """
+      return attn_o, attn_e, attn_e_nomask
 
     # -- 7 Decoder
     decoder_cell = tf.contrib.rnn.LSTMCell(num_units = state_size)
@@ -275,7 +274,7 @@ class Model(object):
     loss_steps = []
     out_idx = []
     all_logits = []
-    dec_out_record = self.dec_out_record
+    # dec_out_record = self.dec_out_record
     # debug
     dbg_dec_o = []
     dbg_attn_mk_o = []
@@ -308,9 +307,10 @@ class Model(object):
         # attention query
         query = prev_h.h
 
-        # output attention to key
+        # attention to key
         attn_mk_o, attn_mk_e, attn_mk_e_nomask = attention(query, embed_mk, embed_mv, 
           self.input_mlen, max_m_len, attn_reuse, "attention_mkey")
+        # attn_mk_o, attn_mk_e, attn_mk_e_nomask = attention_key(query, attn_reuse)
         # for ai in range(self.attn_hop_size - 1):
         #   attn_mk_o, attn_mk_e, attn_mk_e_nomask = attention_key(attn_mk_o, embed_qc, encoded_q, True)
         dbg_attn_mk_o.append(attn_mk_o)
@@ -331,7 +331,7 @@ class Model(object):
         out_len = i * tf.ones([batch_size], tf.float32)
         attn_out_o, attn_out_e, attn_out_e_nomask = attention(query, dec_out_record, dec_out_record, 
           out_len, max_a_len, attn_reuse, "attention_out")
-        # attn_out_o, attn_out_e, attn_out_mo, attn_out_e_nomask = attention_out(query, i, attn_reuse)
+        # attn_out_o, attn_out_e, attn_out_e_nomask = attention_out(query, i, attn_reuse)
         # for ai in range(self.attn_hop_size - 1):
         #   attn_out_o, attn_out_e, attn_out_mo, attn_out_e_nomask = attention_out(attn_out_o, True, i)
         dbg_attn_out_o.append(attn_out_o)
@@ -339,8 +339,15 @@ class Model(object):
         # dbg_attn_out_mo.append(attn_out_mo)
         dbg_attn_out_e_nomask.append(attn_out_e_nomask)
 
+        # attention to question
+        if(i == 0): print("q_rnn_out shape: ", q_rnn_out.shape)
+        attn_q_o, attn_q_e, attn_q_e_nomask = attention(query, q_rnn_out, q_rnn_out, 
+          self.input_qlen, max_q_len, attn_reuse, "attention_q")
+        if(i == 0): print("attn_q_o shape: ", attn_q_o.shape)
+
         # call lstm cell
-        current_o, current_h = decoder_cell(tf.concat([current_i, attn_mk_o, attn_mv_o, attn_out_o], 1) , prev_h) 
+        dec_in_wrap = tf.concat([current_i, attn_mk_o, attn_mv_o, attn_out_o, attn_q_o], 1)
+        current_o, current_h = decoder_cell(dec_in_wrap, prev_h) 
         prev_h = current_h
         dbg_dec_o.append(current_o)
 
@@ -496,8 +503,8 @@ class Model(object):
         loss, _, out_idx = sess.run(self.out_train, feed_dict)
         set_loss += loss
         if(bi % 20 == 0 and bi > 0):
-          if(bi % 100 == 0): 
-            print_batch(dset, qb, qlenb, qcb, ainb, aoub, alenb, acb, mb, mkb, mvb, mlenb, out_idx)
+          # if(bi % 100 == 0): 
+          #   print_batch(dset, qb, qlenb, qcb, ainb, aoub, alenb, acb, mb, mkb, mvb, mlenb, out_idx)
             # mvalid.test(dset, ei, sess)
             # return 
           print("\n------")
@@ -516,17 +523,17 @@ class Model(object):
 
   def test(self, dset, ei, sess):
     print("testing %s set" % self.name)
-    print("batch_size = %d" % self.batch_size)
+    # print("batch_size = %d" % self.batch_size)
     if(self.name == "valid"):
       total_test_batch = dset.total_cases_valid / self.batch_size + 1
     else:
       total_test_batch = dset.total_cases_test / self.batch_size + 1
-    print("%d test batches in total" % total_test_batch)
+    # print("%d test batches in total" % total_test_batch)
     total_coverage = 0
     total_coverage_large = 0
     total_coverage_perfect = 0
     total_repeat_cnt = 0
-    fd = open("%s_%s_epoch%d_gpu%d.txt" % (self.config_name, self.name, ei, self.gpu), "w")
+    fd = open("%s/%s_%s_epoch%d_gpu%d.txt" % (self.out_dir, self.config_name, self.name, ei, self.gpu), "w")
     for bi in range(total_test_batch):
       qb, qlenb, qcb, ainb, aoub, alenb, acb, mb, mkb, mvb, mlenb = dset.get_next_batch(self.name, self.batch_size)
       dec_init_record = np.zeros([self.batch_size, self.max_a_len, self.state_size])
@@ -549,23 +556,28 @@ class Model(object):
       # dropout
       feed_dict[self.keep_prob] = 1.0
       out_idx = sess.run(self.out, feed_dict)[0]
-      coverage, coverage_large, coverage_perfect, cover_targets, covered = metrics(aoub, out_idx, mkb, mvb, dset, bi)
+      coverage, coverage_large, coverage_perfect, cover_targets, covered, repeat_cnt, large_set_tags = metrics(aoub, 
+        out_idx, mkb, mvb, dset, bi)
+      total_repeat_cnt += repeat_cnt
       total_coverage += coverage
       total_coverage_large += coverage_large
       total_coverage_perfect += coverage_perfect
-      write_test_batch(qb, qlenb, aoub, alenb, mb, mkb, mvb, mlenb, out_idx, cover_targets, covered, dset, fd)
+      write_test_batch(qb, qlenb, aoub, alenb, mb, mkb, mvb, mlenb, out_idx,
+        cover_targets, covered, dset, fd, large_set_tags)
     total_coverage /= total_test_batch
     total_coverage_large /= total_test_batch
     total_coverage_perfect /= total_test_batch
-    print("total_coverage = %.2f, large: %.2f, perfect: %.2f" % 
-      (total_coverage, total_coverage_large, total_coverage_perfect))
+    redundancy = total_repeat_cnt / (total_coverage_large * 100)
+    print("total_coverage = %.2f, large: %.2f, perfect: %.2f, repeat: %d, redundancy: %.2f" % 
+      (total_coverage, total_coverage_large, total_coverage_perfect, total_repeat_cnt, redundancy))
     return 
   
-def write_test_batch(qb, qlenb, aoub, alenb, mb, mkb, mvb, mlenb, out_idx, cover_targets, covered, dset, fd):
+def write_test_batch(qb, qlenb, aoub, alenb, mb, mkb, mvb, mlenb, out_idx, cover_targets, covered, dset, fd, large_set_tags):
   aoub = aoub.T
   ct_cnt = 0
   cv_cnt = 0
   for i in range(len(qb)):
+    if(large_set_tags[i] == 0): continue
     qw = "   ".join(dset.id2word[idx] for idx in qb[i][: qlenb[i]])
     qw = "q:   "  + qw
     aouw = "   ".join(dset.id2word[idx] if idx < dset.norm_word_cnt else
@@ -599,6 +611,7 @@ def metrics(aoub, out_idx, mkb, mvb, dset, bi):
   cover_targets = []
   covered = []
   repeat_cnt = 0
+  large_set_tags = []
   for i in range(len(aoub)):
     target_set = Set()
     predict_set = []
@@ -610,7 +623,7 @@ def metrics(aoub, out_idx, mkb, mvb, dset, bi):
         predict_set.append(dset.id2word[mvb[i][j - dset.norm_word_cnt]])
     predict_len = len(predict_set)
     predict_set = Set(predict_set)
-    repeat_cnt += len(predict_set) - predict_len
+    repeat_cnt += predict_len - len(predict_set)
     # print("%d words in target set" % len(target_set))
     # print(target_set)
     # print("%d words in predict set" % len(predict_set))
@@ -621,13 +634,16 @@ def metrics(aoub, out_idx, mkb, mvb, dset, bi):
     if(len(target_set) >= 2):
       target_cnt_large += len(target_set)
       cover_cnt_large += len(target_set & predict_set)
+      large_set_tags.append(1)
+    else:
+      large_set_tags.append(0)
     cover_targets.append(target_set)
     covered.append(predict_set)
   coverage = float(cover_cnt) / target_cnt
   coverage_large = float(cover_cnt_large) / target_cnt_large if target_cnt_large != 0 else 0
   coverage_perfect = float(perfect_cover_cnt) / len(aoub)
   # print("batch %d, coverage: %.2f, coverage for large set: %.2f" % (bi, coverage, coverage_large))
-  return coverage, coverage_large, coverage_perfect, cover_targets, covered, repeat_cnt
+  return coverage, coverage_large, coverage_perfect, cover_targets, covered, repeat_cnt, large_set_tags
 
 def print_batch(dset, qb, qlenb, qcb, ainb, aoub, alenb, acb, mb, mkb, mvb, mlenb, out_idx):
   ainb = ainb.T
