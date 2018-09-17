@@ -33,7 +33,6 @@ import os
 
 MAX_A_LEN = 20
 MAX_M_LEN = 10
-DATA_SOURCE = "ncon"
 
 class Dataset(object):
   def __init__(self):
@@ -1254,8 +1253,12 @@ class Dataset(object):
     self.id_wik_sent = all_news[-1]
     return 
 
-  def build_batches(self, source = DATA_SOURCE):
+  def build_batches(self, config):
     print("\nBuilding batches ... ")
+    conj_size = config.conj_size
+    ncon_size = config.ncon_size
+    wiki_size = config.wiki_size
+    source = config.data_source
     # -- Build batches 
     start_time = time.time()
     if(source == "all"):
@@ -1273,6 +1276,13 @@ class Dataset(object):
       batches_set = { "valid":  self.id_set_ncon["dev"],
                       "test":   self.id_set_ncon["test"],
                       "train":  self.id_set_ncon["train"] }
+    elif(source == "ncon_conj"):
+      batches_set = { "valid":  self.id_set_ncon["dev"] +
+                                self.id_set_conj["dev"],
+                      "test":   self.id_set_ncon["test"] + 
+                                self.id_set_conj["test"],
+                      "train":  self.id_set_ncon["train"][: ncon_size] +
+                                self.id_set_conj["train"][: conj_size] } 
     else:
       raise ValueError("Invalid batch source!")
     batches = dict()
@@ -1299,7 +1309,7 @@ class Dataset(object):
     print("total cases: %d in train, %d in valid, %d in test" % 
       (self.total_cases_train, self.total_cases_valid, self.total_cases_test))
     print("train set, %d non-conjunction, %d conjunction, %d answer wiki, %d normal wiki" % 
-      (len(self.id_set_ncon["train"]), len(self.id_set_conj["train"]), 
+      (ncon_size, len(self.id_set_conj["train"]), 
        len(self.id_set_wiki["train"]), len(self.id_wik_sent)))
     print("time cost: %.2f" % (time.time() - start_time))
     self.max_a_len = MAX_A_LEN
@@ -1459,10 +1469,10 @@ class Dataset(object):
     print("%.2f seconds in total" % (time.time() - start_time))
     return 
 
-  def build_remain(self):
+  def build_remain(self, config):
     self.format_all()
     self.delete_long_ans_mem()
-    self.build_batches()
+    self.build_batches(config)
     self.clear()
     return
 

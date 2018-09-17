@@ -1,14 +1,18 @@
-#
+
+
+
+
 
 import numpy as np
 from main_simple import *
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-from model import *
+from model_checklist import *
+from utils import *
 
 start_time = time.time()
 # dset = Dataset()
-dset = cPickle.load(open("../data/dset.pkl", "rb"))
-dset.build_remain()
+dset = cPickle.load(open("../data/dataset.pkl", "rb"))
+dset.build_remain(config)
 print("\n%.2f seconds to read dset" % (time.time() - start_time))
 
 # build model
@@ -38,51 +42,11 @@ total_batches = dset.total_cases_train
 print("%d batches in total" % total_batches)
 
 
-qb, qlenb, qcb, ainb, aoub, alenb, acb, mb, mkb, mvb, mlenb = dset.get_next_batch("train", m.batch_size)
-dec_init_record = np.zeros([m.batch_size, m.max_a_len, m.state_size])
-# print("dec_init_record shape:", dec_init_record.shape)
-feed_dict = dict()
-# question
-feed_dict[m.input_q] = qb
-feed_dict[m.input_qlen] = qlenb
-feed_dict[m.input_qc] = qcb
-# answer
-feed_dict[m.input_ain] = ainb
-feed_dict[m.input_aou] = aoub
-feed_dict[m.input_alen] = alenb
-feed_dict[m.input_ac] = acb
-# memory
-feed_dict[m.input_mk] = mkb
-feed_dict[m.input_mv] = mvb
-feed_dict[m.input_mlen] = mlenb
-# movie
-feed_dict[m.input_movi] = mb
-# initial mder record
-feed_dict[m.dec_out_record] = dec_init_record
-# dropout
-feed_dict[m.keep_prob] = 0.8
-all_out = sess.run(m.out, feed_dict)
 
-loss = all_out[0]
-train_op = all_out[1]
-out_idx = all_out[2]
-all_logits = all_out[3]
-dbg_dec_o = all_out[4]
-dbg_attn_mk_o = all_out[5]
-dbg_attn_mk_e = all_out[6]
-dbg_attn_mk_e_nomask = all_out[7]
-dbg_attn_mv_o = all_out[8]
-dbg_attn_mv_e = all_out[9]
-dbg_attn_mv_e_nomask = all_out[10]
-dbg_attn_out_o = all_out[11]
-dbg_attn_out_e = all_out[12]
-dbg_attn_out_e_nomask = all_out[13]
-dbg_dec_out_record = all_out[14]
-dbg_attn_o_norm_e = all_out[15]
-dbg_attn_o_spec_e = all_out[16]
+
 
 # Supervised training
-batch_num = 1000
+batch_num = 500
 start_time = time.time()
 set_loss = 0.0
 for bi in range(batch_num):
@@ -122,4 +86,16 @@ for bi in range(batch_num):
     print("time cost: %.2f" % (time.time() - start_time))
     start_time = time.time()
 
+metrics_ret = metrics_full(aoub, qcb, out_idx, mkb, mvb, mlenb, dset, bi)
 
+loss = all_out[0]
+train_op = all_out[1]
+out_idx = all_out[2]
+all_logits = all_out[3]
+dbg_attn_mkey = all_out[4]
+dbg_attn_mval = all_out[5]
+dbg_attn_q = all_out[6]
+dbg_attn_out = all_out[7]
+
+
+attn_visualize(qb, qlenb, mkb, mvb, mlenb, out_idx, dbg_attn_mkey, dbg_attn_mval, dbg_attn_q, dbg_attn_out, dset)

@@ -9,13 +9,15 @@ import tensorflow as tf
 import numpy as np
 import time
 from sets import Set
-from model import metrics, write_test_batch
+from utils import metrics_full, write_test_batch
 
 class Model(object):
   def __init__(self, config, name):
     self.gpu = config.gpu
+    self.gpufrac = config.gpufrac
     self.config_name = config.config_name
     self.name = name
+    self.is_kv = config.is_kv
     self.out_dir = config.out_dir
     self.vocab_size = config.vocab_size
     self.vocab_norm_size = config.vocab_norm_size
@@ -49,7 +51,7 @@ class Model(object):
     qclass_size = self.qclass_size
     aclass_size = self.aclass_size
     memkey_size = self.memkey_size
-    batch_size = self.batch_size
+    batch_size  = self.batch_size
     _GOOID = 2
 
     # -- 1 Placeholders
@@ -69,9 +71,12 @@ class Model(object):
     self.input_ac = tf.placeholder(dtype = tf.int32, shape = [batch_size], name = "input_ac")
     # movie
     self.input_movi = tf.placeholder(dtype = tf.int32, shape = [batch_size], name = "input_movie")
-    self.dec_out_record = tf.placeholder(dtype = tf.float32, 
+    self.out_record_key = tf.placeholder(dtype = tf.float32, 
                                          shape = [batch_size, max_a_len, state_size], 
-                                         name = "dec_out_record")
+                                         name = "out_record_key")
+    self.out_record_val = tf.placeholder(dtype = tf.float32, 
+                                         shape = [batch_size, max_a_len, state_size], 
+                                         name = "out_record_val")
     self.keep_prob  = tf.placeholder(dtype = tf.float32, shape = (), name = "keep_prob")
 
     # -- 2 Build embeddings 
@@ -93,6 +98,8 @@ class Model(object):
                                      shape = [memkey_size, state_size],
                                      dtype = tf.float32, 
                                      initializer = tf.random_uniform_initializer(0.0, 1.0))
+      embed_norm_key = tf.get_variable(name = "embed_norm_key", shape = [state_size],
+        dtype = tf.float32, initializer = tf.random_uniform_initializer(0.0, 1.0))
     embed_q     = tf.nn.embedding_lookup(embed_word,   self.input_q)
     embed_qc    = tf.nn.embedding_lookup(embed_qclass, self.input_qc)
     embed_mk    = tf.nn.embedding_lookup(embed_memkey, self.input_mk)
@@ -199,7 +206,8 @@ class Model(object):
     loss_steps = []
     out_idx = []
     all_logits = []
-    dec_out_record = self.dec_out_record
+    out_record_key = self.out_record_key
+    out_record_val = self.out_record_val
     mem_all = tf.concat((embed_mk, embed_mv), 2)
     attn_hist = tf.get_variable(name = "attn_hist", dtype = tf.float32, 
       initializer = np.zeros([batch_size, max_m_len]).astype(np.float32))
@@ -209,6 +217,11 @@ class Model(object):
     dbg_mem_new = []
     dbg_attn_use_e = []
     dbg_attn_new_e = []
+    dbg_attn_mkey = []
+    dbg_attn_mval = []
+    dbg_attn_outkey = []
+    dbg_attn_outval = []
+    dbg_attn_q = []
     # Decoding
     print("\nStart decoding ... ")
     with tf.variable_scope("decoder") as decoder_scope:
@@ -228,28 +241,94 @@ class Model(object):
 
         mem_use = mem_all * tf.expand_dims(attn_hist, 2)
         mem_new = mem_all * tf.expand_dims((1 - attn_hist), 2)
+        embed_mk_use = embed_mk * tf.expand_dims(attn_hist, 2)
+        embed_mk_new = embed_mk * tf.expand_dims((1 - attn_hist), 2)
+        embed_mv_use = embed_mv * tf.expand_dims(attn_hist, 2)
+        embed_mv_new = embed_mv * tf.expand_dims((1 - attn_hist), 2)
         dbg_mem_use.append(mem_use)
         dbg_mem_new.append(mem_new)
 
-        # output attention to used memory
-        attn_use_o, attn_use_e, attn_use_e_nomask = attention(query, mem_use, mem_use, 
-          self.input_mlen, max_m_len, attn_reuse, "attention_use")
-        dbg_attn_use_e.append(attn_use_e)
+        # checklist
+        # None KV
+        # if(self.is_kv == False):
+        #   # output attention to used memory, all
+        #   attn_use_o, attn_use_e, attn_use_e_nomask = attention(query, mem_use, mem_use, 
+        #     self.input_mlen, max_m_len, attn_reuse, "attention_use")
+        #   dbg_attn_use_e.append(attn_use_e)
+        #   # output attention to memory not use, all 
+        #   attn_new_o, attn_new_e, attn_new_e_nomask = attention(query, mem_new, mem_new, 
+        #     self.input_mlen, max_m_len, attn_reuse, "attention_new")
+        #   dbg_attn_new_e.append(attn_new_e)
+        # # KV 
+        # else:
+        #   # output attention to used memory, key
+        #   attn_use_key_o, attn_use_key_e, _ = attention(query, embed_mk_use, embed_mv_use, 
+        #     self.input_mlen, max_m_len, attn_reuse, "attention_key_use")
+        #   # output attention to used memory, val
+        #   attn_use_val_o, attn_use_val_e, _ = attention(query, embed_mv_use, embed_mv_use, 
+        #     self.input_mlen, max_m_len, attn_reuse, "attention_val_use")
+        #   # output attention to memory not use, key
+        #   attn_new_key_o, attn_new_key_e, _ = attention(query, embed_mk_new, embed_mv_new, 
+        #     self.input_mlen, max_m_len, attn_reuse, "attention_key_new")
+        #   # output attention to memory not use, val
+        #   attn_new_val_o, attn_new_val_e, _ = attention(query, embed_mv_new, embed_mv_new, 
+        #     self.input_mlen, max_m_len, attn_reuse, "attention_val_new")
 
-        # output attention to memory not use
-        attn_new_o, attn_new_e, attn_new_e_nomask = attention(query, mem_new, mem_new, 
-          self.input_mlen, max_m_len, attn_reuse, "attention_new")
-        dbg_attn_new_e.append(attn_new_e)
+        # no checklist
+        # output attention to keys directly
+        attn_mkey_o, attn_mkey_e, _ = attention(query, embed_mk, embed_mv,
+          self.input_mlen, max_m_len, attn_reuse, "attention_key")
+        dbg_attn_mkey.append(attn_mkey_e)
 
-        # call lstm cell
-        current_o, current_h = decoder_cell(tf.concat([current_i, attn_use_o, attn_new_o], 1) , prev_h) 
+        # output attention to values directly
+        attn_mval_o, attn_mval_e, _ = attention(query, embed_mv, embed_mv,
+          self.input_mlen, max_m_len, attn_reuse, "attention_val")
+        dbg_attn_mval.append(attn_mval_e)
+
+        # output attention to question 
+        attn_q_o, attn_q_e, attn_q_e_nomask = attention(query, q_rnn_out, q_rnn_out, 
+          self.input_qlen, max_q_len, attn_reuse, "attention_q")
+        dbg_attn_q.append(attn_q_e)
+
+        out_len = i * tf.ones([batch_size], tf.float32)
+        # output attention to output record key
+        attn_outkey_o, attn_outkey_e, _ = attention(query, out_record_key, out_record_val, 
+          out_len, max_a_len, attn_reuse, "attention_outkey")
+        dbg_attn_outkey.append(attn_outkey_e)
+
+        # output attention to output record val
+        attn_outval_o, attn_outval_e, _ = attention(query, out_record_val, out_record_val, 
+          out_len, max_a_len, attn_reuse, "attention_oval")
+        dbg_attn_outval.append(attn_outval_e)
+
+        # checklist 
+        # if(self.is_kv == False):
+        #   dec_in_wrap = tf.concat([current_i, 
+        #                            attn_use_o,
+        #                            attn_new_o,
+        #                            attn_q_o,
+        #                            attn_out_o], 1)
+        # else:
+        #   dec_in_wrap = tf.concat([current_i, 
+        #                            attn_use_key_o, attn_use_val_o,
+        #                            attn_new_key_o, attn_new_val_o,
+        #                            attn_q_o,
+        #                            attn_out_o], 1)
+
+        # no checklist
+        # attention to key, value, question, and output record
+        dec_in_wrap = tf.concat([current_i, 
+                                 attn_mkey_o, attn_mval_o,
+                                 attn_q_o, 
+                                 attn_outkey_o, attn_outval_o], 1)
+
+        # no output record, no question attention
+        # dec_in_wrap = tf.concat([current_i, 
+        #                          attn_use_o,
+        #                          attn_new_o], 1)
+        current_o, current_h = decoder_cell(dec_in_wrap, prev_h) 
         prev_h = current_h
 
-        # add to record
-        dec_out_new  = tf.expand_dims(tf.one_hot([i], max_a_len), 2) * tf.expand_dims(current_o, 1)
-        # assert(dec_out_new.shape == (batch_size, max_a_len, state_size))
-        if(i == 0): print("dec_out_new shape:", dec_out_new.shape)
-        dec_out_record = dec_out_record + dec_out_new
 
         # output projection to normal word
         out_norm_W = tf.get_variable(name = "out_norm_W", 
@@ -285,23 +364,51 @@ class Model(object):
 
         # softmax and logits
         logits = tf.concat([attn_o_norm_e, attn_o_spec_e], 1) # size: [batch_size, pred_size]
+
+        # add to attention history 
         attn_hist += tf.slice(tf.nn.softmax(logits), [0, norm_size], [batch_size, max_m_len])
         dbg_attn_hist.append(attn_hist)
+
         # logits = logits + softmax_b
         if(self.is_train):
           loss_step = tf.nn.softmax_cross_entropy_with_logits(labels = label_steps[i], logits = logits)
           loss_steps.append(loss_step)
+
         # output index and get the next input
         all_logits.append(logits)
         out_index = tf.argmax(logits, 1)
         out_idx.append(out_index)
+        out_choose_norm, out_choose_spec = tf.split(
+          tf.one_hot(out_index, norm_size + max_m_len), [norm_size, max_m_len], 1)
+        if(i == 0): 
+          print("out_choose_norm size: ", out_choose_norm.shape)
+        norm_emb = embed_word[:norm_size]
+        o_norm = tf.nn.embedding_lookup(norm_emb, tf.cast(tf.argmax(out_choose_norm, 1), tf.int32))
+        if(i == 0): 
+          print("o_norm size: ", o_norm.shape)
+        o_norm = tf.expand_dims(tf.reduce_sum(out_choose_norm, 1), 1) * o_norm
+        if(i == 0): 
+          print("o_norm size: ", o_norm.shape)
+        # o_norm = tf.reduce_sum(tf.expand_dims(out_choose_norm, 2) * tf.expand_dims(norm_emb, 0), 1)
+        o_spec = tf.reduce_sum(tf.expand_dims(out_choose_spec, 2) * embed_mv, 1)
+        out_val = o_norm + o_spec
+        # out_choose_norm size: [batch_size, norm_size]
+        o_norm_key = tf.expand_dims(tf.reduce_sum(out_choose_norm, 1), 1) * tf.expand_dims(embed_norm_key, 0)
+        o_spec_key = tf.reduce_sum(tf.expand_dims(out_choose_spec, 2) * embed_mk, 1)
+        out_key = o_norm_key + o_spec_key
+        if(i == 0): 
+          print("o_norm_key size: ", o_norm_key.shape)
 
         if(self.is_train == False):
-          out_choose_norm, out_choose_spec = tf.split(tf.one_hot(out_index, norm_size + max_m_len), [norm_size, max_m_len], 1)
-          norm_emb = embed_word[:norm_size]
-          o_norm = tf.reduce_sum(tf.expand_dims(out_choose_norm, 2) * tf.expand_dims(norm_emb, 0), 1)
-          o_spec = tf.reduce_sum(tf.expand_dims(out_choose_spec, 2) * embed_mv, 1)
-          prev_o = o_norm + o_spec
+          prev_o = out_val
+
+        # add to record
+        out_new_key  = tf.expand_dims(tf.one_hot([i], max_a_len), 2) * tf.expand_dims(out_key, 1)
+        out_new_val  = tf.expand_dims(tf.one_hot([i], max_a_len), 2) * tf.expand_dims(out_val, 1)
+        # assert(dec_out_new.shape == (batch_size, max_a_len, state_size))
+        if(i == 0): print("out_new_key shape:", out_new_key.shape)
+        out_record_key = out_record_key + out_new_key
+        out_record_val = out_record_key + out_new_val
 
     # -- 8 Output, loss and optimizer
     # debug:
@@ -310,6 +417,11 @@ class Model(object):
     dbg_mem_new = tf.stack(dbg_mem_use)
     dbg_attn_use_e = tf.stack(dbg_attn_use_e)
     dbg_attn_new_e = tf.stack(dbg_attn_new_e)
+    dbg_attn_mkey = tf.transpose(tf.stack(dbg_attn_mkey), [1, 0 ,2]) # [batch_size, timestep, max_m_len]
+    dbg_attn_mval = tf.transpose(tf.stack(dbg_attn_mval), [1, 0 ,2]) 
+    dbg_attn_q = tf.transpose(tf.stack(dbg_attn_q), [1, 0 ,2]) 
+    dbg_attn_outkey = tf.transpose(tf.stack(dbg_attn_outkey), [1, 0 ,2])
+    dbg_attn_outval = tf.transpose(tf.stack(dbg_attn_outval), [1, 0 ,2])
     print("\nCalculate loss ...")
     out_idx = tf.transpose(tf.stack(out_idx)) # size = [batch_size, max_a_len]
     all_logits = tf.transpose(tf.stack(all_logits), [1, 0, 2]) # size = [batch_size, max_a_len, norm_size + max_m_len]
@@ -326,13 +438,16 @@ class Model(object):
     train_op = optimizer.minimize(loss)
     self.out_train = [loss ,train_op, out_idx]
     self.out = [loss ,train_op, out_idx, all_logits]
-    self.out.extend([dbg_attn_hist, dbg_mem_use, dbg_mem_new, dbg_attn_use_e, dbg_attn_new_e])
+    # self.out.extend([dbg_attn_hist, dbg_mem_use, dbg_mem_new, dbg_attn_use_e, dbg_attn_new_e])
+    self.out.extend([dbg_attn_mkey, dbg_attn_mval, dbg_attn_q, dbg_attn_outkey, dbg_attn_outval])
     print("finished")
     return
 
   def train(self, dset, mvalid, mtest):
     print("\nstart training ... ")
-    sess = tf.Session()
+    config = tf.ConfigProto()
+    config.gpu_options.per_process_gpu_memory_fraction = self.gpufrac
+    sess = tf.Session(config=config)
     sess.run(tf.global_variables_initializer())
     total_cases = dset.total_cases_train
     total_batches = total_cases / self.batch_size + 1
@@ -364,19 +479,20 @@ class Model(object):
         # movie
         feed_dict[self.input_movi] = mb
         # initial decoder record
-        feed_dict[self.dec_out_record] = dec_init_record
+        feed_dict[self.out_record_key] = dec_init_record
+        feed_dict[self.out_record_val] = dec_init_record
         # dropout
         feed_dict[self.keep_prob] = 0.8
         loss, _, out_idx = sess.run(self.out_train, feed_dict)
         set_loss += loss
         if(bi % 20 == 0 and bi > 0):
-          if(bi % 100 == 0): 
-            print_batch(dset, qb, qlenb, qcb, ainb, aoub, alenb, acb, mb, mkb, mvb, mlenb, out_idx)
+          # if(bi % 100 == 0): 
+          #   print_batch(dset, qb, qlenb, qcb, ainb, aoub, alenb, acb, mb, mkb, mvb, mlenb, out_idx)
             # mvalid.test(dset, ei, sess)
             # return 
           print("\n------")
           print("model %s, epoch %d, batch %d, current loss %.4f, set loss: %.4f" % (self.config_name, ei, bi, loss, set_loss / 20.0))
-          metrics(aoub, out_idx, mkb, mvb, dset, bi)
+          # metrics(aoub, out_idx, mkb, mvb, dset, bi)
           set_loss = 0.0
           print("time cost: %.2f" % (time.time() - start_time))
           start_time = time.time()
@@ -394,10 +510,12 @@ class Model(object):
       total_test_batch = dset.total_cases_valid / self.batch_size + 1
     else:
       total_test_batch = dset.total_cases_test / self.batch_size + 1
-    total_coverage = 0
-    total_coverage_large = 0
-    total_coverage_perfect = 0
-    total_repeat = 0
+    redundancy += 0.0
+    total_coverage_small += 0.0
+    total_coverage_large_partial += 0.0
+    total_coverage_large_perfect += 0.0
+    enrichment += 0.0
+    mem_cover += 0.0
     fd = open("%s/%s_%s_epoch%d_gpu%d.txt" % (self.out_dir, self.config_name, self.name, ei, self.gpu), "w")
     for bi in range(total_test_batch):
       qb, qlenb, qcb, ainb, aoub, alenb, acb, mb, mkb, mvb, mlenb = dset.get_next_batch(self.name, self.batch_size)
@@ -417,24 +535,38 @@ class Model(object):
       # movie
       feed_dict[self.input_movi] = mb
       # initial decoder record
-      feed_dict[self.dec_out_record] = dec_init_record
+      feed_dict[self.out_record_key] = dec_init_record
+      feed_dict[self.out_record_val] = dec_init_record
       # dropout
       feed_dict[self.keep_prob] = 1.0
       out_idx = sess.run(self.out, feed_dict)[0]
-      coverage, coverage_large, coverage_perfect, cover_targets, covered, repeat_cnt, large_set_tags = metrics(aoub, 
-        out_idx, mkb, mvb, dset, bi)
-      total_coverage += coverage
-      total_coverage_large += coverage_large
-      total_coverage_perfect += coverage_perfect
-      total_repeat += repeat_cnt
+
+      # coverage, coverage_large, coverage_perfect, cover_targets, covered, repeat_cnt, large_set_tags = metrics(aoub, 
+      #   out_idx, mkb, mvb, dset, bi)
+      # total_coverage += coverage
+      # total_coverage_large += coverage_large
+      # total_coverage_perfect += coverage_perfect
+      # total_repeat += repeat_cnt
+
+      metrics_ret = metrics_full(aoub, qcb, out_idx, mkb, mvb, mlenb, dset, bi)
+      redundancy += metrics_ret[0]
+      total_coverage_small += metrics_ret[1]
+      total_coverage_large_partial += metrics_ret[1]
+      total_coverage_large_perfect += metrics_ret[2]
+      enrichment += metrics_ret[3]
+      mem_cover += metrics_ret[4]
+
       write_test_batch(qb, qlenb, aoub, alenb, mb, mkb, mvb, mlenb, out_idx, 
         cover_targets, covered, dset, fd, large_set_tags)
-    total_coverage /= total_test_batch
-    total_coverage_large /= total_test_batch
-    total_coverage_perfect /= total_test_batch
-    redundancy = total_repeat / (total_coverage_large * 100)
-    print("total_coverage = %.2f, large: %.2f, perfect: %.2f, repeat: %d, redundancy: %.2f" % 
-      (total_coverage, total_coverage_large, total_coverage_perfect, total_repeat, redundancy))
+    redundancy /= total_test_batch
+    total_coverage_small /= total_test_batch
+    total_coverage_large_partial /= total_test_batch
+    total_coverage_large_perfect /= total_test_batch
+    enrichment /= total_test_batch
+    mem_cover /= total_test_batch
+    print("redundancy: %.4f, enrichment: %.4f, mem_cover: %.4f" % (redundancy, enrichment, mem_cover))
+    print("total coverage, small: %.4f, large_partial: %.4f, large_perfect: %.4f" % 
+      (total_coverage_small, total_coverage_large_partial, total_coverage_large_perfect))
     return 
 
 def print_batch(dset, qb, qlenb, qcb, ainb, aoub, alenb, acb, mb, mkb, mvb, mlenb, out_idx):
